@@ -27,6 +27,7 @@ jobs:
     # push covers branches in this repo; pull_request is only needed for forks
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 20 # outer guard; the scan itself stops after timeout-minutes (15)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -89,6 +90,8 @@ Single findings can still be silenced inline with a `betterleaks:allow` (or `git
 | `path` | `.` | Repo path to scan, relative to the workspace |
 | `config` | `.gitleaks.toml` | Repository config relative to `path` (optional) |
 | `base-config` | `true` | Apply the EEA base config; `false` uses only the repo config / defaults |
+| `baseline` | `.betterleaks-baseline.json` | Known findings to ignore, relative to `path`; used when the file exists. Empty disables |
+| `timeout-minutes` | `15` | Scan time limit; a scan that does not finish fails as an error |
 | `fail-on-leak` | `true` | Fail the job when leaks are found |
 | `upload-report` | `true` | Upload the JSON report as an artifact |
 | `artifact-name` | `betterleaks-report` | Artifact name |
@@ -96,7 +99,8 @@ Single findings can still be silenced inline with a `betterleaks:allow` (or `git
 | `fallback-email` | empty | Recipient when the committer has no deliverable address (see below) |
 
 Inputs are validated: `mode` must be `dir` or `git`, the `true`/`false` inputs must be exactly that,
-and `path` / `config` must stay inside the workspace.
+`timeout-minutes` must be a positive integer, and `path` / `config` / `baseline` must stay inside the
+workspace.
 
 ## Outputs
 
@@ -108,11 +112,46 @@ and `path` / `config` must stay inside the workspace.
 | `report-path` | JSON report, under `RUNNER_TEMP` (never written into the checkout) |
 | `commit` | Commit that was scanned; also used in the email |
 
+## What shows on the check
+
+The job is the check on the commit (green tick / red cross). Click it to see:
+
+- **Leaks**: one error annotation per finding at its file and line (the first 10; GitHub's limit per
+  step). In pull requests the same annotations appear inline in "Files changed".
+- **Clean**: a notice, e.g. "No secrets found (64.39 KB scanned, dir scan of `beb8f2694eee`, config:
+  EEA base + .gitleaks.toml)".
+- **Job summary** on the run page: scan, commit, bytes scanned, config, baseline and a table of all
+  findings (rule, file, line). Values are always redacted.
+
+## Baseline: adopting the scan in a repository with existing findings
+
+In `dir` mode an existing finding fails every run until it is fixed. To start with only new findings
+failing, record the current ones once:
+
+```sh
+betterleaks/tests/scan-local.sh /path/to/repo dir --write-baseline
+# review /path/to/repo/.betterleaks-baseline.json, then commit it
+```
+
+Every entry in the baseline should be a false positive or a secret that has already been rotated.
+Entries match on file, rule and line, so editing lines above a known finding makes it "new" again;
+prefer fixing or allowlisting findings over growing the baseline.
+
 ## Errors vs leaks
 
 Leaks set `result=leaks`, email the committer and fail the job in the last step. Problems that are not
-leaks fail the scan step itself, without an email: invalid inputs, the Betterleaks image not being
-pullable (retried 3 times first) and scanner errors. Re-run the job for registry hiccups.
+leaks fail the scan step itself, without an email and without a result:
+
+- invalid inputs
+- the Betterleaks image not being pullable (retried 3 times first); re-run the job
+- the scan not finishing within `timeout-minutes` (Betterleaks' own `--timeout` is not used: it stops
+  early and still reports "no leaks found")
+- a scan that did not read the repository: Betterleaks' "partial scan" warning, or 0 bytes scanned in
+  `dir` mode (in `git` mode a merge commit legitimately has nothing to scan)
+- other scanner errors
+
+Live validation of findings against provider APIs is explicitly off (`--validation=false`), so found
+secrets are never sent anywhere.
 
 The scan logic lives in [`scripts/scan.sh`](scripts/scan.sh); the repository is mounted read-only into
 the scanner container.

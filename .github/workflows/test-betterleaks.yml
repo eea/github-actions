@@ -167,6 +167,97 @@ jobs:
         run: |
           jq -e '[.[] | .StartLine] == [2]' "$REPORT" || { jq '.[] | {RuleID, StartLine}' "$REPORT"; exit 1; }
 
+      # --- what shows on the check: annotations and job summary ---------------
+      # scan.sh is called directly so its stdout (annotation commands) and the
+      # summary file can be inspected; printed output is defused with "> ".
+
+      - name: "check output: leak is annotated at file and line, summary lists it"
+        run: |
+          image="$(sed -n 's/^[[:space:]]*BETTERLEAKS_IMAGE:[[:space:]]*//p' betterleaks/action.yml)"
+          out="$(REPO_DIR="$GITHUB_WORKSPACE" OUT_DIR="$RUNNER_TEMP/annotate" SCAN_PATH=fixture \
+            BETTERLEAKS_IMAGE="$image" GITHUB_OUTPUT="$RUNNER_TEMP/annotate.out" \
+            GITHUB_STEP_SUMMARY="$RUNNER_TEMP/annotate.md" betterleaks/scripts/scan.sh)"
+          if ! grep -q '^::error file=fixture/values.yaml,line=2,endLine=2,title=Betterleaks%3A github-pat::' <<<"$out"; then
+            awk '{ print "> " $0 }' <<<"$out"; exit 1
+          fi
+          grep -q '^## Betterleaks: 1 potential secret' "$RUNNER_TEMP/annotate.md"
+          grep -qE '^\| .github-pat. \| .values\.yaml. \| 2 \|$' "$RUNNER_TEMP/annotate.md"
+          if grep -q 'ghp_' "$RUNNER_TEMP/annotate.md" || grep -q 'ghp_' <<<"$out"; then
+            echo "token not redacted"; exit 1
+          fi
+
+      - name: "check output: clean scan adds a notice"
+        run: |
+          mkdir -p clean && echo "nothing to see" > clean/readme.txt
+          image="$(sed -n 's/^[[:space:]]*BETTERLEAKS_IMAGE:[[:space:]]*//p' betterleaks/action.yml)"
+          out="$(REPO_DIR="$GITHUB_WORKSPACE" OUT_DIR="$RUNNER_TEMP/clean" SCAN_PATH=clean \
+            BETTERLEAKS_IMAGE="$image" GITHUB_OUTPUT="$RUNNER_TEMP/clean.out" \
+            GITHUB_STEP_SUMMARY="$RUNNER_TEMP/clean.md" betterleaks/scripts/scan.sh)"
+          grep -q '^::notice title=Betterleaks::No secrets found' <<<"$out" || { awk '{ print "> " $0 }' <<<"$out"; exit 1; }
+          grep -q '^## Betterleaks: no secrets found' "$RUNNER_TEMP/clean.md"
+
+      # --- baseline: known findings are ignored, new ones still fail ----------
+
+      - name: Create fixture with a known leak and its baseline
+        run: |
+          mkdir -p baselined
+          echo "token: ghp_$(head -c 400 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 36)" > baselined/old.yaml
+          image="$(sed -n 's/^[[:space:]]*BETTERLEAKS_IMAGE:[[:space:]]*//p' betterleaks/action.yml)"
+          REPO_DIR="$GITHUB_WORKSPACE" OUT_DIR="$RUNNER_TEMP/baseline" SCAN_PATH=baselined BASELINE='' \
+            BETTERLEAKS_IMAGE="$image" betterleaks/scripts/scan.sh > /dev/null
+          cp "$RUNNER_TEMP/baseline/betterleaks-report.json" baselined/.betterleaks-baseline.json
+
+      - name: "baseline: scan with only the known leak"
+        id: baseline_known
+        uses: ./betterleaks
+        with:
+          path: baselined
+          fail-on-leak: "false"
+          upload-report: "false"
+
+      - name: Add a new leak next to the known one
+        run: |
+          echo "token: ghp_$(head -c 400 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 36)" > baselined/new.yaml
+
+      - name: "baseline: scan with a new leak"
+        id: baseline_new
+        uses: ./betterleaks
+        with:
+          path: baselined
+          fail-on-leak: "false"
+          upload-report: "false"
+
+      - name: "baseline: assert the known leak is ignored and the new one is reported"
+        env:
+          KNOWN: ${{ steps.baseline_known.outputs.result }}
+          NEW_RESULT: ${{ steps.baseline_new.outputs.result }}
+          REPORT: ${{ steps.baseline_new.outputs.report-path }}
+        run: |
+          test "$KNOWN" = "clean" || { echo "known leak was reported ($KNOWN)"; exit 1; }
+          test "$NEW_RESULT" = "leaks" || { echo "new leak was not reported ($NEW_RESULT)"; exit 1; }
+          jq -e '[.[].File] == ["new.yaml"]' "$REPORT"
+
+      # --- a scan that read nothing is an error, not a clean result -----------
+
+      - name: Create an empty folder
+        run: mkdir -p empty-folder
+
+      - name: "zero bytes: dir scan of the empty folder"
+        id: zero_scan
+        continue-on-error: true
+        uses: ./betterleaks
+        with:
+          path: empty-folder
+          upload-report: "false"
+
+      - name: "zero bytes: assert it failed instead of reporting clean"
+        env:
+          OUTCOME: ${{ steps.zero_scan.outcome }}
+          RESULT: ${{ steps.zero_scan.outputs.result }}
+        run: |
+          test "$OUTCOME" = "failure" || { echo "expected failure, got $OUTCOME"; exit 1; }
+          test -z "$RESULT" || { echo "a result was reported: $RESULT"; exit 1; }
+
       # --- invalid input and infrastructure errors ----------------------------
 
       - name: "invalid input: mode"
@@ -187,6 +278,15 @@ jobs:
           fail-on-leak: "yes"
           upload-report: "false"
 
+      - name: "invalid input: timeout-minutes"
+        id: bad_timeout
+        continue-on-error: true
+        uses: ./betterleaks
+        with:
+          path: fixture
+          timeout-minutes: "0"
+          upload-report: "false"
+
       - name: "invalid input: path outside the workspace"
         id: bad_path
         continue-on-error: true
@@ -200,8 +300,9 @@ jobs:
           MODE: ${{ steps.bad_mode.outcome }}
           BOOL: ${{ steps.bad_bool.outcome }}
           PATH_OUTCOME: ${{ steps.bad_path.outcome }}
+          TIMEOUT: ${{ steps.bad_timeout.outcome }}
         run: |
-          for o in "mode=$MODE" "fail-on-leak=$BOOL" "path=$PATH_OUTCOME"; do
+          for o in "mode=$MODE" "fail-on-leak=$BOOL" "path=$PATH_OUTCOME" "timeout-minutes=$TIMEOUT"; do
             [[ "${o#*=}" == "failure" ]] || { echo "invalid ${o%%=*} was accepted (${o#*=})"; exit 1; }
           done
 

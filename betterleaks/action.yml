@@ -23,6 +23,17 @@ inputs:
       Apply the shared EEA base config (betterleaks/config/eea-base.toml).
       Set to `false` to use only the repository config (or Betterleaks defaults).
     default: "true"
+  baseline:
+    description: >-
+      Known findings to ignore (a Betterleaks JSON report), relative to `path`.
+      Used when the file exists; only new findings then fail. Create it with
+      `betterleaks/tests/scan-local.sh <repo> dir --write-baseline`. Empty disables.
+    default: .betterleaks-baseline.json
+  timeout-minutes:
+    description: >-
+      Scan time limit. A scan that does not finish fails as an error (never as
+      a clean result).
+    default: "15"
   log-opts:
     description: git log options selecting the commits to scan in `git` mode.
     default: "-1"
@@ -87,6 +98,8 @@ runs:
         LOG_OPTS: ${{ inputs.log-opts }}
         CONFIG: ${{ inputs.config }}
         BASE_CONFIG: ${{ inputs.base-config }}
+        BASELINE: ${{ inputs.baseline }}
+        TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
         FAIL_ON_LEAK: ${{ inputs.fail-on-leak }}
         UPLOAD_REPORT: ${{ inputs.upload-report }}
       run: '"$GITHUB_ACTION_PATH/scripts/scan.sh"'
