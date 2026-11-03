@@ -79,7 +79,7 @@ betterleaks/tests/scan-local.sh /path/to/repo        # dir mode
 betterleaks/tests/scan-local.sh /path/to/repo git    # latest commit only
 ```
 
-Single findings can still be silenced inline with a `betterleaks:allow` (or `gitleaks:allow`) comment.
+How to deal with what the scan reports is described in [Handling findings](#handling-findings).
 
 ## Inputs
 
@@ -123,19 +123,60 @@ The job is the check on the commit (green tick / red cross). Click it to see:
 - **Job summary** on the run page: scan, commit, bytes scanned, config, baseline and a table of all
   findings (rule, file, line). Values are always redacted.
 
-## Baseline: adopting the scan in a repository with existing findings
+## Handling findings
 
-In `dir` mode an existing finding fails every run until it is fixed. To start with only new findings
-failing, record the current ones once:
+Decide in this order. Each case has one tool; do not use a later one for an earlier case.
+
+| Finding | Do this | Why this tool |
+|---|---|---|
+| **A real secret** | Remove it **and rotate it**. Removing is not enough: it is in the git history and was public on public repositories. | Nothing else makes it safe |
+| **A false positive on one line**, in a file that allows comments (YAML, Python, shell, Jenkinsfile, Dockerfile, docker-compose) | Add a `betterleaks:allow` comment on that line | Stays with the line when the file changes; visible in review |
+| **A false-positive pattern**: it recurs, or the file cannot take comments (JSON, lock files, generated, vendored or minified files, config formats such as ZConfig) | Add an allowlist to the repository `.gitleaks.toml`, as narrow as possible (`paths` + `regexes` with `condition = "AND"`) | Matches by pattern, so it survives edits, and carries a description |
+| **The same pattern in many repositories** | Propose it for the EEA base config ([`config/eea-base.toml`](config/eea-base.toml)) in this repository | One change for every repository |
+| **A backlog of existing findings** when first enabling the scan in a repository | A [baseline](#baseline-temporary-for-adoption-only), temporarily, while the backlog is fixed with the rows above | Only tool that ignores existing findings without touching them |
+
+Inline comment examples:
+
+```yaml
+POSTGRES_PASSWORD: postgres # betterleaks:allow (local development only)
+```
+
+```groovy
+withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_AUTH_TOKEN')]) { //betterleaks:allow
+```
+
+Repository allowlist example (the value **and** the file must match, so a real secret added to the same
+file is still reported):
+
+```toml
+[[allowlists]]
+description = "Local development RelStorage password defaults"
+condition = "AND"
+paths = ['''(?i)(^|/)develop/etc/relstorage\.conf$''']
+regexTarget = "match"
+regexes = ['''password='zope''']  # betterleaks:allow (allowlist pattern, not a secret)
+```
+
+That particular one is already in the EEA base config, like the other exceptions shared by many
+repositories. Anyone can add a `betterleaks:allow` comment, so reviewers should treat one like any other
+change to security checks.
+
+### Baseline: temporary, for adoption only
+
+In `dir` mode an existing finding fails every run until it is handled. When enabling the scan in a
+repository with a backlog, record the current findings once so that only new ones fail:
 
 ```sh
 betterleaks/tests/scan-local.sh /path/to/repo dir --write-baseline
 # review /path/to/repo/.betterleaks-baseline.json, then commit it
 ```
 
-Every entry in the baseline should be a false positive or a secret that has already been rotated.
-Entries match on file, rule and line, so editing lines above a known finding makes it "new" again;
-prefer fixing or allowlisting findings over growing the baseline.
+- Review every entry before committing: a real secret in the list must still be removed and rotated.
+- Entries match on file, rule **and line**: an edit above a known finding makes it "new" again, and an
+  entry silences whatever is on that line, including a different secret added there later. That is
+  why exceptions belong in comments or allowlists, not in the baseline.
+- Work the backlog down with the table above and delete the file when it is empty. The job summary
+  shows how many known findings the baseline still ignores.
 
 ## Errors vs leaks
 

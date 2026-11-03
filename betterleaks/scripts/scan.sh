@@ -38,6 +38,7 @@
 set -euo pipefail
 
 readonly REPORT_NAME="betterleaks-report.json"
+readonly HANDLING_FINDINGS_URL="https://github.com/eea/github-actions/tree/main/betterleaks#handling-findings"
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../config" && pwd)"
 readonly BASE_DIR
 
@@ -306,7 +307,8 @@ write_summary() {
     (( leaks > 100 )) && echo "| ... | $(( leaks - 100 )) more in the report artifact | |"
     echo
     echo "Values are redacted. For each finding: remove the secret and **rotate it** (it is in the git"
-    echo "history), or allowlist it in \`$CONFIG\` / with a \`betterleaks:allow\` comment if it is not a secret."
+    echo "history), or, if it is not a secret, add a \`betterleaks:allow\` comment or an allowlist in"
+    echo "\`$CONFIG\`. See [Handling findings]($HANDLING_FINDINGS_URL)."
   } >> "$SUMMARY_FILE"
 }
 
