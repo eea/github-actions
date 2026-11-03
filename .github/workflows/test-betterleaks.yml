@@ -37,12 +37,25 @@ jobs:
 
       - name: "git mode: assert leak detected and redacted"
         env:
+          RESULT: ${{ steps.git_leak.outputs.result }}
           LEAKS: ${{ steps.git_leak.outputs.leaks }}
           REPORT: ${{ steps.git_leak.outputs.report-path }}
+          COMMIT: ${{ steps.git_leak.outputs.commit }}
         run: |
+          test "$RESULT" = "leaks" || { echo "expected result=leaks, got '$RESULT'"; exit 1; }
           test "$LEAKS" -ge 1 || { echo "expected a leak, got '$LEAKS'"; exit 1; }
           jq -e 'any(.[]; .RuleID == "github-pat")' "$REPORT"
           ! grep -q 'ghp_' "$REPORT" || { echo "token not redacted"; exit 1; }
+          test "$COMMIT" = "$(git -C fixture rev-parse HEAD)" || { echo "commit output '$COMMIT' is not the fixture HEAD"; exit 1; }
+
+      - name: "git mode: assert report is outside the workspace"
+        env:
+          REPORT: ${{ steps.git_leak.outputs.report-path }}
+        run: |
+          [[ "$REPORT" == "$RUNNER_TEMP"/* ]] || { echo "report not under RUNNER_TEMP: $REPORT"; exit 1; }
+          if find "$GITHUB_WORKSPACE" -name betterleaks-report.json | grep -q .; then
+            echo "report written into the workspace"; exit 1
+          fi
 
       - name: Add clean commit on top
         working-directory: fixture
@@ -131,6 +144,59 @@ jobs:
           LEAKS: ${{ steps.nobase.outputs.leaks }}
         run: test "$LEAKS" = "0" || { echo "expected 0 leaks without base config, got $LEAKS"; exit 1; }
 
+      # --- invalid input and infrastructure errors ----------------------------
+
+      - name: "invalid input: mode"
+        id: bad_mode
+        continue-on-error: true
+        uses: ./betterleaks
+        with:
+          mode: foo
+          path: fixture
+          upload-report: "false"
+
+      - name: "invalid input: fail-on-leak"
+        id: bad_bool
+        continue-on-error: true
+        uses: ./betterleaks
+        with:
+          path: fixture
+          fail-on-leak: "yes"
+          upload-report: "false"
+
+      - name: "invalid input: path outside the workspace"
+        id: bad_path
+        continue-on-error: true
+        uses: ./betterleaks
+        with:
+          path: ../..
+          upload-report: "false"
+
+      - name: "invalid input: assert each one failed"
+        env:
+          MODE: ${{ steps.bad_mode.outcome }}
+          BOOL: ${{ steps.bad_bool.outcome }}
+          PATH_OUTCOME: ${{ steps.bad_path.outcome }}
+        run: |
+          for o in "mode=$MODE" "fail-on-leak=$BOOL" "path=$PATH_OUTCOME"; do
+            [[ "${o#*=}" == "failure" ]] || { echo "invalid ${o%%=*} was accepted (${o#*=})"; exit 1; }
+          done
+
+      - name: "infrastructure: image pull failure is an error, not a leak"
+        run: |
+          set +e
+          out="$(REPO_DIR="$GITHUB_WORKSPACE" OUT_DIR="$RUNNER_TEMP/pull-test" SCAN_PATH=fixture \
+            BETTERLEAKS_IMAGE=ghcr.io/betterleaks/betterleaks:v0.0.0-does-not-exist \
+            PULL_ATTEMPTS=2 PULL_DELAY=1 GITHUB_OUTPUT="$RUNNER_TEMP/pull-test.out" \
+            betterleaks/scripts/scan.sh 2>&1)"
+          rc=$?
+          set -e
+          echo "$out"
+          test "$rc" -ne 0 || { echo "expected a failure"; exit 1; }
+          grep -q 'infrastructure problem, not a leak' <<<"$out"
+          test "$(grep -c 'retrying' <<<"$out")" = "1"
+          ! grep -q '^result=' "$RUNNER_TEMP/pull-test.out" 2>/dev/null || { echo "a result was reported"; exit 1; }
+
   # Exercises the steps the scan tests skip: artifact upload, committer email
   # (sent to a throwaway Mailpit SMTP server) and the final failing step.
   notify:
@@ -194,6 +260,7 @@ jobs:
           echo "$text"
           grep -q 'github-pat at values.yaml:2' <<<"$text" || { echo "finding missing from email"; exit 1; }
           ! grep -q 'ghp_' <<<"$text" || { echo "token not redacted in email"; exit 1; }
+          grep -q "^Commit: $(git -C fixture rev-parse HEAD)" <<<"$text" || { echo "email does not name the scanned commit"; exit 1; }
 
       - name: Assert report artifact uploaded and redacted
         env:

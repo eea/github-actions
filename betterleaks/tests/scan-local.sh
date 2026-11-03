@@ -1,20 +1,27 @@
 #!/usr/bin/env bash
-# Run the same scan as the action locally: EEA base config + the repo's .gitleaks.toml.
-# Usage: scan-local.sh [repo-dir] [dir|git] [extra betterleaks args...]
+# ============================================================================
+# Run the same scan as the action, locally: EEA base config + the repository's
+# .gitleaks.toml, pinned image from action.yml. Prints the findings.
+#
+# Usage: scan-local.sh [repo-dir] [dir|git]
+# Exit status: 0 clean, 1 leaks found or error.
+# ============================================================================
 set -euo pipefail
-here="$(cd "$(dirname "$0")/.." && pwd)"
-repo="$(cd "${1:-.}" && pwd)"; mode="${2:-dir}"; shift $(( $# > 2 ? 2 : $# ))
-image="$(grep -oP 'BETTERLEAKS_IMAGE: \K\S+' "$here/action.yml")"
-cfg="$(mktemp -d)"; trap 'rm -rf "$cfg"' EXIT
-if [[ -f "$repo/.gitleaks.toml" ]]; then
-  awk '/^[[:space:]]*\[extend\][[:space:]]*(#.*)?$/ {skip=1; next}
-       skip && /^[[:space:]]*\[/ {skip=0}
-       !skip {print}' "$repo/.gitleaks.toml" > "$cfg/config.toml"
-  printf '\n[extend]\npath = "/eea-config/eea-base.toml"\n' >> "$cfg/config.toml"
-else
-  cp "$here/config/eea-base.toml" "$cfg/config.toml"
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo="${1:-.}"
+mode="${2:-dir}"
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+image="$(sed -n 's/^[[:space:]]*BETTERLEAKS_IMAGE:[[:space:]]*//p' "$here/action.yml")"
+[[ -n "$image" ]] || { echo "BETTERLEAKS_IMAGE not found in $here/action.yml" >&2; exit 1; }
+
+REPO_DIR="$repo" OUT_DIR="$tmp/out" MODE="$mode" BETTERLEAKS_IMAGE="$image" \
+  PULL_DELAY=2 GITHUB_OUTPUT="$tmp/outputs" "$here/scripts/scan.sh"
+
+if grep -qx 'result=leaks' "$tmp/outputs"; then
+  jq -r '.[] | "  \(.RuleID) \(.File):\(.StartLine)"' "$tmp/out/betterleaks-report.json"
+  exit 1
 fi
-args=(dir .); [[ "$mode" == git ]] && args=(git . --log-opts=-1)
-docker run --rm --user "$(id -u):$(id -g)" -v "$repo:/repo:ro" \
-  -v "$here/config:/eea-config:ro" -v "$cfg:/cfg:ro" -w /repo "$image" \
-  "${args[@]}" --config /cfg/config.toml --redact --no-banner "$@"

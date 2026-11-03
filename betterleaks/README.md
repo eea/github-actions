@@ -71,7 +71,12 @@ paths = ['''(^|/)develop/etc/.*\.conf$''']
 
 The action replaces the repo file's `[extend]` table with a reference to the base config, so the same
 file still works on its own for local runs (`betterleaks dir . -c .gitleaks.toml`: defaults + repo rules).
-To run locally with the EEA rules too, use [`tests/scan-local.sh`](tests/scan-local.sh).
+To run the same scan locally (same script, pinned image and config layering as CI):
+
+```sh
+betterleaks/tests/scan-local.sh /path/to/repo        # dir mode
+betterleaks/tests/scan-local.sh /path/to/repo git    # latest commit only
+```
 
 Single findings can still be silenced inline with a `betterleaks:allow` (or `gitleaks:allow`) comment.
 
@@ -90,9 +95,27 @@ Single findings can still be silenced inline with a `betterleaks:allow` (or `git
 | `smtp-url`, `smtp-port`, `smtp-email`, `smtp-password` | empty / `25` | Email notification; skipped when `smtp-url` or `smtp-email` is empty |
 | `fallback-email` | empty | Recipient when the committer has no deliverable address (see below) |
 
+Inputs are validated: `mode` must be `dir` or `git`, the `true`/`false` inputs must be exactly that,
+and `path` / `config` must stay inside the workspace.
+
 ## Outputs
 
-`leaks` (count), `exit-code`, `report-path`.
+| Output | Description |
+|---|---|
+| `result` | `clean` or `leaks` |
+| `leaks` | Number of findings |
+| `exit-code` | Betterleaks exit code |
+| `report-path` | JSON report, under `RUNNER_TEMP` (never written into the checkout) |
+| `commit` | Commit that was scanned; also used in the email |
+
+## Errors vs leaks
+
+Leaks set `result=leaks`, email the committer and fail the job in the last step. Problems that are not
+leaks fail the scan step itself, without an email: invalid inputs, the Betterleaks image not being
+pullable (retried 3 times first) and scanner errors. Re-run the job for registry hiccups.
+
+The scan logic lives in [`scripts/scan.sh`](scripts/scan.sh); the repository is mounted read-only into
+the scanner container.
 
 ## Who gets the email
 
@@ -118,4 +141,3 @@ trigger `push` here (they get no secrets, so no email, but the check still fails
   with `fetch-depth: 0` to scan the whole push.
 - `mode: dir` scans the files as checked out, so an existing leak keeps failing until it is removed
   or allowlisted.
-- A non-zero exit without findings is a scan error and also fails the job (and emails "No JSON report").

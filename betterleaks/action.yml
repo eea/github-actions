@@ -55,15 +55,21 @@ inputs:
     default: ""
 
 outputs:
+  result:
+    description: "`clean` or `leaks`. Invalid input, image pull failures and scanner errors fail the step instead."
+    value: ${{ steps.scan.outputs.result }}
   leaks:
-    description: Number of leaks found.
+    description: Number of findings.
     value: ${{ steps.scan.outputs.leaks }}
   exit-code:
-    description: Betterleaks exit code (0 = clean, 1 = leaks or scan error).
+    description: Betterleaks exit code (0 = clean, 1 = leaks).
     value: ${{ steps.scan.outputs.exit-code }}
   report-path:
-    description: Absolute path of the JSON report.
+    description: Absolute path of the JSON report (under RUNNER_TEMP, not in the workspace).
     value: ${{ steps.scan.outputs.report-path }}
+  commit:
+    description: Commit that was scanned (HEAD of `path`).
+    value: ${{ steps.scan.outputs.commit }}
 
 runs:
   using: composite
@@ -74,73 +80,19 @@ runs:
       env:
         # Pinned by tag and digest. Bumped by .github/workflows/betterleaks-update.yml.
         BETTERLEAKS_IMAGE: ghcr.io/betterleaks/betterleaks:v1.9.0@sha256:e3b95b0db6c2735db17165c009b0ad6d9cef34fb4578659232b98f69d7346cac
-        MODE: ${{ inputs.mode }}
+        REPO_DIR: ${{ github.workspace }}
+        OUT_DIR: ${{ runner.temp }}/betterleaks
         SCAN_PATH: ${{ inputs.path }}
+        MODE: ${{ inputs.mode }}
+        LOG_OPTS: ${{ inputs.log-opts }}
         CONFIG: ${{ inputs.config }}
         BASE_CONFIG: ${{ inputs.base-config }}
-        LOG_OPTS: ${{ inputs.log-opts }}
-      run: |
-        report="betterleaks-report.json"
-        rm -f "$GITHUB_WORKSPACE/$report"
-        repo_config="$GITHUB_WORKSPACE/$SCAN_PATH/$CONFIG"
-        cfg_dir="$RUNNER_TEMP/betterleaks-config"
-        rm -rf "$cfg_dir" && mkdir -p "$cfg_dir"
-
-        case "$MODE" in
-          dir) args=(dir .) ;;
-          git) args=(git . --log-opts="$LOG_OPTS") ;;
-          *) echo "::error::Invalid mode '$MODE' (expected dir or git)"; exit 1 ;;
-        esac
-        args+=(--report-format json --report-path "/repo/$report"
-               --redact --no-color --no-banner)
-
-        mounts=(-v "$GITHUB_WORKSPACE:/repo")
-        if [[ "$BASE_CONFIG" == "true" ]]; then
-          mounts+=(-v "$GITHUB_ACTION_PATH/config:/eea-config:ro" -v "$cfg_dir:/cfg:ro")
-          if [[ -f "$repo_config" ]]; then
-            # Layer the repo config on the EEA base: drop its own [extend]
-            # table and extend the base instead (base extends the defaults).
-            awk '/^[[:space:]]*\[extend\][[:space:]]*(#.*)?$/ {skip=1; next}
-                 skip && /^[[:space:]]*\[/ {skip=0}
-                 !skip {print}' "$repo_config" > "$cfg_dir/config.toml"
-            printf '\n[extend]\npath = "/eea-config/eea-base.toml"\n' >> "$cfg_dir/config.toml"
-            echo "Config: EEA base + $CONFIG"
-          else
-            cp "$GITHUB_ACTION_PATH/config/eea-base.toml" "$cfg_dir/config.toml"
-            echo "Config: EEA base ($CONFIG not found)"
-          fi
-          args+=(--config /cfg/config.toml)
-        elif [[ -f "$repo_config" ]]; then
-          args+=(--config "$CONFIG")
-          echo "Config: $CONFIG"
-        else
-          echo "Config: Betterleaks defaults"
-        fi
-
-        # Run as the runner user: as root, git refuses the mounted repo
-        # ("dubious ownership") and the scan silently covers 0 bytes.
-        set +e
-        docker run --rm --user "$(id -u):$(id -g)" "${mounts[@]}" \
-          -w "/repo/$SCAN_PATH" "$BETTERLEAKS_IMAGE" "${args[@]}"
-        rc=$?
-        set -e
-
-        leaks=0
-        if [[ -s "$GITHUB_WORKSPACE/$report" ]]; then
-          leaks="$(jq 'length' "$GITHUB_WORKSPACE/$report")"
-        fi
-        if [[ $rc -ne 0 && $leaks -eq 0 ]]; then
-          echo "::error::Betterleaks exited with $rc without reporting leaks (scan error). Check the log above."
-        fi
-
-        {
-          echo "exit-code=$rc"
-          echo "leaks=$leaks"
-          echo "report-path=$GITHUB_WORKSPACE/$report"
-        } >> "$GITHUB_OUTPUT"
+        FAIL_ON_LEAK: ${{ inputs.fail-on-leak }}
+        UPLOAD_REPORT: ${{ inputs.upload-report }}
+      run: '"$GITHUB_ACTION_PATH/scripts/scan.sh"'
 
     - name: Upload Betterleaks report
-      if: always() && inputs.upload-report == 'true'
+      if: always() && inputs.upload-report == 'true' && steps.scan.outputs.report-path != ''
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.artifact-name }}
@@ -149,40 +101,37 @@ runs:
 
     - name: Build email summary
       id: summary
-      if: steps.scan.outputs.exit-code != '0' && inputs.smtp-url != '' && inputs.smtp-email != ''
+      if: steps.scan.outputs.result == 'leaks' && inputs.smtp-url != '' && inputs.smtp-email != ''
       shell: bash
       env:
         REPORT: ${{ steps.scan.outputs.report-path }}
       run: |
-        if [[ -s "$REPORT" ]]; then
-          jq -r '
-            def one_line:
-              tostring
-              | gsub("[\r\n]+"; " ")
-              | if length > 240 then .[0:240] + "..." else . end;
+        set -euo pipefail
+        summary="$RUNNER_TEMP/betterleaks-summary.txt"
+        jq -r '
+          def one_line:
+            tostring
+            | gsub("[\r\n]+"; " ")
+            | if length > 240 then .[0:240] + "..." else . end;
 
-            .[:20][]
-            | "- " + (.RuleID // "unknown-rule")
-              + " at " + (.File // "unknown-file")
-              + ":" + ((.StartLine // 0) | tostring)
-              + "\n  match: " + ((.Match // .Secret // "REDACTED") | one_line)
-          ' "$REPORT" > "$RUNNER_TEMP/betterleaks-summary.txt"
+          .[:20][]
+          | "- " + (.RuleID // "unknown-rule")
+            + " at " + (.File // "unknown-file")
+            + ":" + ((.StartLine // 0) | tostring)
+            + "\n  match: " + ((.Match // .Secret // "REDACTED") | one_line)
+        ' "$REPORT" > "$summary"
 
-          count="$(jq 'length' "$REPORT")"
-          if (( count > 20 )); then
-            printf '\n... and %d more finding(s). Download the artifact for full details.\n' \
-              "$((count - 20))" >> "$RUNNER_TEMP/betterleaks-summary.txt"
-          fi
-        else
-          echo "No JSON report was generated. Download the workflow logs for details." \
-            > "$RUNNER_TEMP/betterleaks-summary.txt"
+        count="$(jq 'length' "$REPORT")"
+        if (( count > 20 )); then
+          printf '\n... and %d more finding(s). Download the artifact for full details.\n' \
+            "$((count - 20))" >> "$summary"
         fi
 
         # Random delimiter: the summary contains text from the scanned commits.
         delim="EOF_$(openssl rand -hex 16)"
         {
           echo "text<<$delim"
-          cat "$RUNNER_TEMP/betterleaks-summary.txt"
+          cat "$summary"
           echo "$delim"
         } >> "$GITHUB_OUTPUT"
 
@@ -194,38 +143,53 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
         REPO: ${{ github.repository }}
+        COMMIT: ${{ steps.scan.outputs.commit }}
         FALLBACK: ${{ inputs.fallback-email }}
       run: |
+        set -euo pipefail
+
         # A usable address is well-formed and not a no-reply address
         # (noreply@github.com, <id>+<login>@users.noreply.github.com, no-reply@...).
         deliverable() {
-          [[ "$1" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || return 1
-          shopt -s nocasematch
-          [[ "$1" != *noreply* && "$1" != *no-reply* ]]
+          local address="${1,,}"
+          [[ "$address" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || return 1
+          [[ "$address" != *noreply* && "$address" != *no-reply* ]]
         }
 
-        email=""; source=""
+        email=""
+        found_via=""
         for candidate in "committer:$(git log -1 --format='%ce')" "author:$(git log -1 --format='%ae')"; do
-          if deliverable "${candidate#*:}"; then email="${candidate#*:}"; source="${candidate%%:*}"; break; fi
+          if deliverable "${candidate#*:}"; then
+            email="${candidate#*:}"
+            found_via="${candidate%%:*}"
+            break
+          fi
         done
 
         # Web-UI commits and private-email users only carry no-reply addresses:
         # try the public email on the commit author's GitHub profile.
-        if [[ -z "$email" ]]; then
-          sha="$(git rev-parse HEAD)"
-          login="$(gh api "repos/$REPO/commits/$sha" --jq '.author.login // empty' 2>/dev/null || true)"
+        if [[ -z "$email" && -n "$COMMIT" ]]; then
+          login="$(gh api "repos/$REPO/commits/$COMMIT" --jq '.author.login // empty' 2>/dev/null || true)"
           if [[ -n "$login" ]]; then
             profile="$(gh api "users/$login" --jq '.email // empty' 2>/dev/null || true)"
-            if deliverable "$profile"; then email="$profile"; source="GitHub profile of $login"; fi
+            if deliverable "$profile"; then
+              email="$profile"
+              found_via="GitHub profile of $login"
+            fi
           fi
         fi
 
-        if [[ -z "$email" ]] && deliverable "$FALLBACK"; then
-          email="$FALLBACK"; source="fallback-email"
+        if [[ -z "$email" && -n "$FALLBACK" ]]; then
+          if deliverable "$FALLBACK"; then
+            email="$FALLBACK"
+            found_via="fallback-email"
+          else
+            echo "::warning::fallback-email '$FALLBACK' is not a deliverable address; ignored."
+          fi
         fi
 
         if [[ -n "$email" ]]; then
-          echo "Notifying $email ($source)."
+          echo "Notifying $email ($found_via)."
         else
           echo "::warning::No deliverable email for the committer (no-reply addresses, no public profile email) and no fallback-email set; no notification sent."
         fi
@@ -247,8 +211,8 @@ runs:
           Betterleaks detected one or more potential secrets.
 
           Repository: ${{ github.repository }}
-          Branch: ${{ github.ref_name }}
-          Commit: ${{ github.sha }}
+          Branch: ${{ github.head_ref || github.ref_name }}
+          Commit: ${{ steps.scan.outputs.commit || github.sha }}
           Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
           Findings:
@@ -257,10 +221,11 @@ runs:
           Download the ${{ inputs.artifact-name }} artifact from the workflow run for details.
 
     - name: Fail if Betterleaks found leaks
-      if: steps.scan.outputs.exit-code != '0' && inputs.fail-on-leak == 'true'
+      if: steps.scan.outputs.result == 'leaks' && inputs.fail-on-leak == 'true'
       shell: bash
       env:
+        LEAKS: ${{ steps.scan.outputs.leaks }}
         ARTIFACT_NAME: ${{ inputs.artifact-name }}
       run: |
-        echo "Betterleaks detected one or more secrets. Download the $ARTIFACT_NAME artifact from this workflow run for details."
+        echo "::error::Betterleaks found $LEAKS potential secret(s). Download the $ARTIFACT_NAME artifact from this workflow run for details."
         exit 1
