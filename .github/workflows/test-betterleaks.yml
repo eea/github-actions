@@ -130,3 +130,81 @@ jobs:
         env:
           LEAKS: ${{ steps.nobase.outputs.leaks }}
         run: test "$LEAKS" = "0" || { echo "expected 0 leaks without base config, got $LEAKS"; exit 1; }
+
+  # Exercises the steps the scan tests skip: artifact upload, committer email
+  # (sent to a throwaway Mailpit SMTP server) and the final failing step.
+  notify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # list and download this run's artifacts
+    services:
+      mailpit:
+        image: axllent/mailpit:v1.33.0@sha256:9b3a463be15354c0f0eba91697d80e3e0d8a5623ef0e627cacc836bc17fd5231
+        env:
+          MP_SMTP_AUTH_ACCEPT_ANY: 1
+          MP_SMTP_AUTH_ALLOW_INSECURE: 1
+        ports:
+          - 1025:1025
+          - 8025:8025
+    env:
+      ARTIFACT: betterleaks-report-test-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Create fixture repo with a fake leak in the latest commit
+        run: betterleaks/tests/make-fixture.sh fixture
+
+      - name: Wait for Mailpit
+        run: |
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:8025/readyz && exit 0
+            sleep 1
+          done
+          echo "Mailpit not ready"; exit 1
+
+      - name: Scan with upload, email and fail-on-leak (expected to fail)
+        id: notify
+        continue-on-error: true
+        uses: ./betterleaks
+        with:
+          mode: git
+          path: fixture
+          artifact-name: ${{ env.ARTIFACT }}
+          smtp-url: localhost
+          smtp-port: "1025"
+          smtp-email: betterleaks@example.com
+          smtp-password: ${{ github.run_id }} # Mailpit accepts any login
+
+      - name: Assert the job would fail
+        env:
+          OUTCOME: ${{ steps.notify.outcome }}
+        run: test "$OUTCOME" = "failure" || { echo "expected failure, got $OUTCOME"; exit 1; }
+
+      - name: Assert email sent to the committer
+        run: |
+          msgs="$(curl -sf http://localhost:8025/api/v1/messages)"
+          test "$(jq '.total' <<<"$msgs")" = "1" || { echo "expected 1 email"; jq . <<<"$msgs"; exit 1; }
+          jq -e '.messages[0].To[0].Address == "test@example.com"' <<<"$msgs"
+          jq -e '.messages[0].Subject | startswith("[Betterleaks] Secret scan failed in ")' <<<"$msgs"
+          id="$(jq -r '.messages[0].ID' <<<"$msgs")"
+          text="$(curl -sf "http://localhost:8025/api/v1/message/$id" | jq -r .Text)"
+          echo "$text"
+          grep -q 'github-pat at values.yaml:2' <<<"$text" || { echo "finding missing from email"; exit 1; }
+          ! grep -q 'ghp_' <<<"$text" || { echo "token not redacted in email"; exit 1; }
+
+      - name: Assert report artifact uploaded and redacted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          id="$(gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts" \
+            --jq ".artifacts[] | select(.name == \"$ARTIFACT\") | .id")"
+          test -n "$id" || { echo "artifact $ARTIFACT not found"; exit 1; }
+          gh api "repos/$REPO/actions/artifacts/$id/zip" > report.zip
+          unzip -p report.zip betterleaks-report.json > report.json
+          jq -e 'any(.[]; .RuleID == "github-pat")' report.json
+          ! grep -q 'ghp_' report.json || { echo "token not redacted in artifact"; exit 1; }
