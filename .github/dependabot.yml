@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # Keeps actions used inside the composite actions and workflows up to date.
+  - package-ecosystem: github-actions
+    directories: ["/", "/betterleaks"]
+    schedule:
+      interval: weekly

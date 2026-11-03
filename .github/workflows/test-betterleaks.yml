@@ -1,0 +1,132 @@
+name: Test betterleaks
+
+on:
+  push:
+    paths:
+      - betterleaks/**
+      - .github/workflows/test-betterleaks.yml
+  pull_request:
+    paths:
+      - betterleaks/**
+      - .github/workflows/test-betterleaks.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Create fixture repo with a fake leak in the latest commit
+        run: betterleaks/tests/make-fixture.sh fixture
+
+      # --- git mode -----------------------------------------------------------
+
+      - name: "git mode: scan leaking commit"
+        id: git_leak
+        uses: ./betterleaks
+        with:
+          mode: git
+          path: fixture
+          fail-on-leak: "false"
+          upload-report: "false"
+
+      - name: "git mode: assert leak detected and redacted"
+        env:
+          LEAKS: ${{ steps.git_leak.outputs.leaks }}
+          REPORT: ${{ steps.git_leak.outputs.report-path }}
+        run: |
+          test "$LEAKS" -ge 1 || { echo "expected a leak, got '$LEAKS'"; exit 1; }
+          jq -e 'any(.[]; .RuleID == "github-pat")' "$REPORT"
+          ! grep -q 'ghp_' "$REPORT" || { echo "token not redacted"; exit 1; }
+
+      - name: Add clean commit on top
+        working-directory: fixture
+        run: |
+          echo more >> a.txt
+          git commit -qam clean
+
+      - name: "git mode: scan clean commit"
+        id: git_clean
+        uses: ./betterleaks
+        with:
+          mode: git
+          path: fixture
+          fail-on-leak: "false"
+          upload-report: "false"
+
+      - name: "git mode: assert only the latest commit is scanned"
+        env:
+          LEAKS: ${{ steps.git_clean.outputs.leaks }}
+          RC: ${{ steps.git_clean.outputs.exit-code }}
+        run: |
+          if [[ "$LEAKS" != "0" || "$RC" != "0" ]]; then
+            echo "expected clean scan, got leaks=$LEAKS exit=$RC"
+            exit 1
+          fi
+
+      # --- dir mode -----------------------------------------------------------
+
+      - name: "dir mode: scan the whole tree (leak is still in values.yaml)"
+        id: dir_leak
+        uses: ./betterleaks
+        with:
+          path: fixture
+          fail-on-leak: "false"
+          upload-report: "false"
+
+      - name: "dir mode: assert leak detected"
+        env:
+          REPORT: ${{ steps.dir_leak.outputs.report-path }}
+        run: jq -e 'any(.[]; .RuleID == "github-pat" and .File == "values.yaml")' "$REPORT"
+
+      # --- EEA base config layered with the repo config -----------------------
+
+      - name: Create fixture with a repo allowlist and forbidden files
+        run: |
+          mkdir -p layered/allowed
+          printf 'not a key\n' > layered/allowed/example.pem
+          printf 'not a key\n' > layered/server.pem
+          cat > layered/.gitleaks.toml <<'TOML'
+          title = "repo config"
+
+          [extend]
+          useDefault = true
+
+          [[allowlists]]
+          description = "Repo-specific allowlist"
+          paths = ['''^allowed/''']
+          TOML
+
+      - name: "layered: scan"
+        id: layered
+        uses: ./betterleaks
+        with:
+          path: layered
+          fail-on-leak: "false"
+          upload-report: "false"
+
+      - name: "layered: assert base rule applies and repo allowlist is honoured"
+        env:
+          REPORT: ${{ steps.layered.outputs.report-path }}
+        run: |
+          jq -e '[.[] | select(.RuleID == "forbidden-secret-file") | .File] == ["server.pem"]' "$REPORT" \
+            || { jq '.[] | {RuleID, File}' "$REPORT"; exit 1; }
+
+      - name: "layered: scan without the base config"
+        id: nobase
+        uses: ./betterleaks
+        with:
+          path: layered
+          base-config: "false"
+          fail-on-leak: "false"
+          upload-report: "false"
+
+      - name: "layered: assert EEA rules are off with base-config false"
+        env:
+          LEAKS: ${{ steps.nobase.outputs.leaks }}
+        run: test "$LEAKS" = "0" || { echo "expected 0 leaks without base config, got $LEAKS"; exit 1; }

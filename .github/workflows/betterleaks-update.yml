@@ -1,0 +1,104 @@
+name: Betterleaks update check
+
+# Weekly: if a newer Betterleaks release exists, pin it (tag + digest) in
+# betterleaks/action.yml, prove it still detects a fake leak, and open a PR.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Find latest release
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The betterleaks GitHub org has an IP allow list that rejects
+          # token-authenticated API requests from runners, so resolve the
+          # latest release anonymously from the web redirect.
+          tag="$(curl -fsSI https://github.com/betterleaks/betterleaks/releases/latest \
+            | tr -d '\r' | sed -n 's#^location: .*/releases/tag/##Ip')"
+          # Upstream-controlled value: only accept plain semver tags.
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Unexpected release tag '$tag'"
+            exit 1
+          fi
+          current="$(grep -oP 'ghcr\.io/betterleaks/betterleaks:\K[^@]+' betterleaks/action.yml)"
+          echo "current=$current latest=$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          if [[ "$tag" == "$current" ]]; then
+            echo "uptodate=true" >> "$GITHUB_OUTPUT"
+          elif gh pr list --head "betterleaks-$tag" --state open --json number --jq 'length' | grep -qv '^0$'; then
+            echo "PR for $tag already open."
+            echo "uptodate=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pin new image by digest
+        if: steps.latest.outputs.uptodate != 'true'
+        env:
+          TAG: ${{ steps.latest.outputs.tag }}
+        run: |
+          image="ghcr.io/betterleaks/betterleaks:$TAG"
+          docker pull -q "$image"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$image" | cut -d@ -f2)"
+          sed -i -E "s#ghcr\.io/betterleaks/betterleaks:[^ ]+#$image@$digest#" betterleaks/action.yml
+          git diff
+
+      # PRs opened with GITHUB_TOKEN do not trigger workflows, so the new
+      # image is tested here, before the PR is opened.
+      - name: Create fixture repo
+        if: steps.latest.outputs.uptodate != 'true'
+        run: betterleaks/tests/make-fixture.sh fixture
+
+      - name: Scan fixture with new image
+        id: scan
+        if: steps.latest.outputs.uptodate != 'true'
+        uses: ./betterleaks
+        with:
+          mode: git
+          path: fixture
+          fail-on-leak: "false"
+          upload-report: "false"
+
+      - name: Assert leak still detected
+        if: steps.latest.outputs.uptodate != 'true'
+        env:
+          LEAKS: ${{ steps.scan.outputs.leaks }}
+        run: test "$LEAKS" -ge 1 || { echo "new image found '$LEAKS' leaks, expected at least 1"; exit 1; }
+
+      - name: Open PR
+        if: steps.latest.outputs.uptodate != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.latest.outputs.tag }}
+          CURRENT: ${{ steps.latest.outputs.current }}
+        run: |
+          rm -rf fixture
+          branch="betterleaks-$TAG"
+          major_note=""
+          if [[ "${CURRENT%%.*}" != "${TAG%%.*}" ]]; then
+            major_note=$'\n\n**Major version change** - check the release notes for CLI or report format changes before merging.'
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -am "chore(betterleaks): bump image to $TAG"
+          git push -u origin "$branch"
+          gh pr create --title "chore(betterleaks): bump image $CURRENT -> $TAG" \
+            --body "Release notes: https://github.com/betterleaks/betterleaks/releases/tag/$TAG
+
+          Pinned by digest. The fake-leak self-test passed with the new image in the workflow run that opened this PR.${major_note}
+
+          After merging, move the major tag so callers pick it up:
+          \`git tag -f v1 && git push -f origin v1\`"
