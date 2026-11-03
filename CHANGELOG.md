@@ -19,6 +19,14 @@ Actions are released together under the major tag (`v1`).
   email (via a Mailpit SMTP service container) and the failing final step, so bumps of
   `upload-artifact` and `action-send-mail` are actually exercised.
 
+- 2026-11-03 — `betterleaks`: `fallback-email` input, and lookup of the public email on the commit
+  author's GitHub profile when the commit only has no-reply addresses.
+
+### Fixed
+
+- 2026-11-03 — `betterleaks`: the committer email was sent to `noreply@github.com` for commits made in
+  the GitHub web UI. All no-reply addresses are now skipped and the chosen recipient is logged.
+
 ### Changed
 
 - 2026-11-03 — Bumped `actions/checkout` to v7.0.1, `actions/upload-artifact` to v7.0.2 and
