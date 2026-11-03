@@ -24,6 +24,8 @@ permissions:
 jobs:
   scan:
     name: Scan for secrets
+    # push covers branches in this repo; pull_request is only needed for forks
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -100,6 +102,14 @@ the author's GitHub profile, then `fallback-email`. No-reply addresses (`noreply
 UI, or by users who keep their email private, only carry no-reply addresses, so set `fallback-email`
 (for example from an organization variable `BETTERLEAKS_FALLBACK_EMAIL`). Without any address, the run
 logs a warning and still fails.
+
+## Triggers
+
+`push` scans every branch of the repository, including direct pushes without a PR. A PR from a
+branch of the same repository would be scanned a second time by `pull_request`, so the job skips
+those; the PR still shows the result of the `push` run on the same commit, and a job skipped by `if:`
+counts as successful for required checks. `pull_request` is kept for PRs from forks, which never
+trigger `push` here (they get no secrets, so no email, but the check still fails).
 
 ## Notes
 
