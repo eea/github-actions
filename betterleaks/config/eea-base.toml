@@ -111,3 +111,10 @@ regexTarget = "match"
 regexes = [
   '''password='zope''', # betterleaks:allow (allowlist pattern, not a secret)
 ]
+
+[[allowlists]]
+description = "Allow $PWD bind mounts (docker run -v \"$PWD:/path\"): the shell variable, not a password"
+regexTarget = "match"
+regexes = [
+  '''^PWD:/''',
+]

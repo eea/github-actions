@@ -144,6 +144,29 @@ jobs:
           LEAKS: ${{ steps.nobase.outputs.leaks }}
         run: test "$LEAKS" = "0" || { echo "expected 0 leaks without base config, got $LEAKS"; exit 1; }
 
+      - name: Create fixture with $PWD bind mounts and a real pwd secret
+        run: |
+          mkdir -p pwdmount
+          cat > pwdmount/run.sh <<'SCRIPT'
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt image
+          SCRIPT
+          key="pwd"   # built at runtime so this workflow holds no secret-like literal
+          echo "${key}=$(head -c 400 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16)" >> pwdmount/run.sh
+
+      - name: "bind mount: scan"
+        id: pwdmount
+        uses: ./betterleaks
+        with:
+          path: pwdmount
+          fail-on-leak: "false"
+          upload-report: "false"
+
+      - name: "bind mount: assert the mount is allowed and the secret is not"
+        env:
+          REPORT: ${{ steps.pwdmount.outputs.report-path }}
+        run: |
+          jq -e '[.[] | .StartLine] == [2]' "$REPORT" || { jq '.[] | {RuleID, StartLine}' "$REPORT"; exit 1; }
+
       # --- invalid input and infrastructure errors ----------------------------
 
       - name: "invalid input: mode"

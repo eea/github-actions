@@ -39,7 +39,9 @@ Actions are released together under the major tag (`v1`).
   stay inside the workspace); an invalid `fallback-email` is reported.
 
 ### Fixed
-
+- 2026-11-03 — `betterleaks` base config: `docker run -v "$PWD:/path"` was reported by
+  `secret-literal-assignment` (`PWD` read as a password name). Allowlisted when the match is
+  `PWD:/…` only; `pwd=…`, `DB_PWD: …` and similar are still reported.
 - 2026-11-03 — `betterleaks`: the committer email was sent to `noreply@github.com` for commits made in
   the GitHub web UI. All no-reply addresses are now skipped and the chosen recipient is logged.
 
