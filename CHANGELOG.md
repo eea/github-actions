@@ -19,6 +19,9 @@ Actions are released together under the major tag (`v1`).
   passing as clean (Betterleaks "partial scan" warning, or 0 bytes scanned in `dir` mode).
 - 2026-11-03 — `betterleaks`: live validation explicitly disabled (`--validation=false`), so found
   secrets are never sent to provider APIs even if a future release changes the default.
+- 2026-11-03 — `betterleaks` README: "Handling findings" — real secret → remove and rotate; one line →
+  `betterleaks:allow`; pattern or comment-less file → repo allowlist; shared pattern → EEA base config;
+  baseline only temporarily when adopting the scan. The job summary links to it.
 
 ### Added
 
