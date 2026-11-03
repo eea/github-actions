@@ -25,8 +25,23 @@ Actions are released together under the major tag (`v1`).
 - 2026-11-03 — `betterleaks` README: example workflow skips the duplicate `pull_request` scan for
   branches of the same repository (`push` covers them); `pull_request` only runs for forks.
 
-### Fixed
+### Changed (review of the action's shell code)
 
+- 2026-11-03 — `betterleaks`: scan logic moved to `scripts/scan.sh`, shared by the action and
+  `tests/scan-local.sh` (no more duplicated config merge); shellcheck-clean, `set -euo pipefail`.
+- 2026-11-03 — `betterleaks`: the repository is mounted read-only into the scanner; the report is
+  written under `RUNNER_TEMP` instead of the checkout.
+- 2026-11-03 — `betterleaks`: the image pull is retried 3 times; pull failures and scanner errors fail
+  the step as errors and no longer email the committer as if a leak was found.
+- 2026-11-03 — `betterleaks`: the email names the scanned commit and the PR head branch (was the merge
+  commit / `N/merge` on `pull_request`). New outputs `result` and `commit`.
+- 2026-11-03 — `betterleaks`: inputs are validated (`mode`, boolean inputs, `path` and `config` must
+  stay inside the workspace); an invalid `fallback-email` is reported.
+
+### Fixed
+- 2026-11-03 — `betterleaks` base config: `docker run -v "$PWD:/path"` was reported by
+  `secret-literal-assignment` (`PWD` read as a password name). Allowlisted when the match is
+  `PWD:/…` only; `pwd=…`, `DB_PWD: …` and similar are still reported.
 - 2026-11-03 — `betterleaks`: the committer email was sent to `noreply@github.com` for commits made in
   the GitHub web UI. All no-reply addresses are now skipped and the chosen recipient is logged.
 
