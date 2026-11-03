@@ -5,6 +5,21 @@ Actions are released together under the major tag (`v1`).
 
 ## Unreleased
 
+### Added (comparison with other Betterleaks and Gitleaks actions)
+
+- 2026-11-03 — `betterleaks`: results on the check itself — one error annotation per finding at its
+  file and line (also inline in pull request diffs), a notice for clean scans, and a job summary
+  with all findings, scan details and config.
+- 2026-11-03 — `betterleaks`: `baseline` input (default `.betterleaks-baseline.json`, used when
+  present) so repositories with existing findings fail only on new ones;
+  `tests/scan-local.sh <repo> dir --write-baseline` creates it.
+- 2026-11-03 — `betterleaks`: `timeout-minutes` input (default 15). Enforced outside the scanner:
+  Betterleaks' own `--timeout` stops early and still reports "no leaks found".
+- 2026-11-03 — `betterleaks`: a scan that did not read the repository fails as an error instead of
+  passing as clean (Betterleaks "partial scan" warning, or 0 bytes scanned in `dir` mode).
+- 2026-11-03 — `betterleaks`: live validation explicitly disabled (`--validation=false`), so found
+  secrets are never sent to provider APIs even if a future release changes the default.
+
 ### Added
 
 - 2026-11-02 — `betterleaks`: composite action that scans for secrets with Betterleaks
