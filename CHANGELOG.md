@@ -22,6 +22,9 @@ Actions are released together under the major tag (`v1`).
 - 2026-11-03 — `betterleaks`: `fallback-email` input, and lookup of the public email on the commit
   author's GitHub profile when the commit only has no-reply addresses.
 
+- 2026-11-03 — `betterleaks` README: example workflow skips the duplicate `pull_request` scan for
+  branches of the same repository (`push` covers them); `pull_request` only runs for forks.
+
 ### Fixed
 
 - 2026-11-03 — `betterleaks`: the committer email was sent to `noreply@github.com` for commits made in
