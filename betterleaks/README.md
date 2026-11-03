@@ -39,6 +39,7 @@ jobs:
           smtp-port: ${{ secrets.SMTP_PORT || '25' }}
           smtp-email: ${{ secrets.SMTP_EMAIL }}
           smtp-password: ${{ secrets.SMTP_PASSWORD }}
+          fallback-email: ${{ vars.BETTERLEAKS_FALLBACK_EMAIL }}
 ```
 
 ## Configuration
@@ -85,10 +86,20 @@ Single findings can still be silenced inline with a `betterleaks:allow` (or `git
 | `upload-report` | `true` | Upload the JSON report as an artifact |
 | `artifact-name` | `betterleaks-report` | Artifact name |
 | `smtp-url`, `smtp-port`, `smtp-email`, `smtp-password` | empty / `25` | Email notification; skipped when `smtp-url` or `smtp-email` is empty |
+| `fallback-email` | empty | Recipient when the committer has no deliverable address (see below) |
 
 ## Outputs
 
 `leaks` (count), `exit-code`, `report-path`.
+
+## Who gets the email
+
+The first deliverable address of: the commit's committer, the commit's author, the public email on
+the author's GitHub profile, then `fallback-email`. No-reply addresses (`noreply@github.com`,
+`<id>+<login>@users.noreply.github.com`, `no-reply@...`) are never used. Commits made in the GitHub web
+UI, or by users who keep their email private, only carry no-reply addresses, so set `fallback-email`
+(for example from an organization variable `BETTERLEAKS_FALLBACK_EMAIL`). Without any address, the run
+logs a warning and still fails.
 
 ## Notes
 

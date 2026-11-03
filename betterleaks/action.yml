@@ -47,6 +47,12 @@ inputs:
   smtp-password:
     description: SMTP password.
     default: ""
+  fallback-email:
+    description: >-
+      Recipient when no deliverable committer address is found (commit
+      emails are GitHub no-reply addresses and the GitHub profile has no
+      public email). Typically a team address from an org variable.
+    default: ""
 
 outputs:
   leaks:
@@ -185,17 +191,45 @@ runs:
       if: steps.summary.outcome == 'success'
       shell: bash
       working-directory: ${{ github.workspace }}/${{ inputs.path }}
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+        FALLBACK: ${{ inputs.fallback-email }}
       run: |
-        email="$(git log -1 --format='%ce')"
-        if [[ -z "$email" || "$email" == *"noreply.github.com"* ]]; then
-          email="$(git log -1 --format='%ae')"
+        # A usable address is well-formed and not a no-reply address
+        # (noreply@github.com, <id>+<login>@users.noreply.github.com, no-reply@...).
+        deliverable() {
+          [[ "$1" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || return 1
+          shopt -s nocasematch
+          [[ "$1" != *noreply* && "$1" != *no-reply* ]]
+        }
+
+        email=""; source=""
+        for candidate in "committer:$(git log -1 --format='%ce')" "author:$(git log -1 --format='%ae')"; do
+          if deliverable "${candidate#*:}"; then email="${candidate#*:}"; source="${candidate%%:*}"; break; fi
+        done
+
+        # Web-UI commits and private-email users only carry no-reply addresses:
+        # try the public email on the commit author's GitHub profile.
+        if [[ -z "$email" ]]; then
+          sha="$(git rev-parse HEAD)"
+          login="$(gh api "repos/$REPO/commits/$sha" --jq '.author.login // empty' 2>/dev/null || true)"
+          if [[ -n "$login" ]]; then
+            profile="$(gh api "users/$login" --jq '.email // empty' 2>/dev/null || true)"
+            if deliverable "$profile"; then email="$profile"; source="GitHub profile of $login"; fi
+          fi
         fi
-        if [[ "$email" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ && "$email" != *"noreply.github.com"* ]]; then
-          echo "email=$email" >> "$GITHUB_OUTPUT"
+
+        if [[ -z "$email" ]] && deliverable "$FALLBACK"; then
+          email="$FALLBACK"; source="fallback-email"
+        fi
+
+        if [[ -n "$email" ]]; then
+          echo "Notifying $email ($source)."
         else
-          echo "No deliverable committer email found; skipping email notification."
-          echo "email=" >> "$GITHUB_OUTPUT"
+          echo "::warning::No deliverable email for the committer (no-reply addresses, no public profile email) and no fallback-email set; no notification sent."
         fi
+        echo "email=$email" >> "$GITHUB_OUTPUT"
 
     - name: Email committer
       if: steps.committer.outputs.email != ''
