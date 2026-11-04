@@ -118,3 +118,10 @@ regexTarget = "match"
 regexes = [
   '''^PWD:/''',
 ]
+
+[[allowlists]]
+description = "Allow shell required-variable checks (${VAR_TOKEN:?message}): the value is an error message. ${VAR:-default} is still reported"
+regexTarget = "match"
+regexes = [
+  '''^[A-Za-z0-9_]+:\?''',
+]
