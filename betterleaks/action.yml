@@ -69,7 +69,7 @@ inputs:
       On leaks, @mention the commit author in a commit comment so GitHub
       notifies them at their own address. Needs a `comment-token` that can
       write commit comments (`contents: write`). Typically
-      `${{ vars.BETTERLEAKS_MENTION_AUTHOR == 'true' }}`.
+      the expression vars.BETTERLEAKS_MENTION_AUTHOR == 'true' in the calling workflow.
     default: "false"
   comment-token:
     description: Token used to write the commit comment for `mention-author`.
