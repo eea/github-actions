@@ -21,6 +21,18 @@ jobs:
         with:
           persist-credentials: false
 
+      # GitHub evaluates expressions even in descriptions; a bad one stops the
+      # action from loading at all, and actionlint does not check action.yml.
+      # The pattern is built in two parts so this workflow does not contain it.
+      - name: "action.yml: no expressions in descriptions"
+        run: |
+          pattern='$'
+          pattern+='{{'
+          if yq '.inputs[].description, .outputs[].description' betterleaks/action.yml | grep -F "$pattern"; then
+            echo "::error file=betterleaks/action.yml::Remove expressions from input/output descriptions."
+            exit 1
+          fi
+
       - name: "mention-author: unit tests with a fake gh"
         run: betterleaks/tests/mention-author.test.sh
 
