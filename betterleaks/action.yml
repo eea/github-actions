@@ -64,6 +64,16 @@ inputs:
       emails are GitHub no-reply addresses and the GitHub profile has no
       public email). Typically a team address from an org variable.
     default: ""
+  mention-author:
+    description: >-
+      On leaks, @mention the commit author in a commit comment so GitHub
+      notifies them at their own address. Needs a `comment-token` that can
+      write commit comments (`contents: write`). Typically
+      the expression vars.BETTERLEAKS_MENTION_AUTHOR == 'true' in the calling workflow.
+    default: "false"
+  comment-token:
+    description: Token used to write the commit comment for `mention-author`.
+    default: ${{ github.token }}
 
 outputs:
   result:
@@ -102,6 +112,7 @@ runs:
         TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
         FAIL_ON_LEAK: ${{ inputs.fail-on-leak }}
         UPLOAD_REPORT: ${{ inputs.upload-report }}
+        MENTION_AUTHOR: ${{ inputs.mention-author }}
       run: '"$GITHUB_ACTION_PATH/scripts/scan.sh"'
 
     - name: Upload Betterleaks report
@@ -232,6 +243,22 @@ runs:
           ${{ steps.summary.outputs.text }}
 
           Download the ${{ inputs.artifact-name }} artifact from the workflow run for details.
+
+    # A failed comment (missing permission, fork PR token) must never change
+    # the scan result: warn and carry on.
+    - name: Mention the commit author
+      if: steps.scan.outputs.result == 'leaks' && inputs.mention-author == 'true' && steps.scan.outputs.commit != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.comment-token }}
+        REPO: ${{ github.repository }}
+        COMMIT: ${{ steps.scan.outputs.commit }}
+        REPORT: ${{ steps.scan.outputs.report-path }}
+        SCAN_PATH: ${{ inputs.path }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        "$GITHUB_ACTION_PATH/scripts/mention-author.sh" \
+          || echo "::warning title=Betterleaks::Could not comment on the commit (does the token have contents: write?). The scan result is unaffected."
 
     - name: Fail if Betterleaks found leaks
       if: steps.scan.outputs.result == 'leaks' && inputs.fail-on-leak == 'true'

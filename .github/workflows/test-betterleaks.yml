@@ -21,6 +21,21 @@ jobs:
         with:
           persist-credentials: false
 
+      # GitHub evaluates expressions even in descriptions; a bad one stops the
+      # action from loading at all, and actionlint does not check action.yml.
+      # The pattern is built in two parts so this workflow does not contain it.
+      - name: "action.yml: no expressions in descriptions"
+        run: |
+          pattern='$'
+          pattern+='{{'
+          if yq '.inputs[].description, .outputs[].description' betterleaks/action.yml | grep -F "$pattern"; then
+            echo "::error file=betterleaks/action.yml::Remove expressions from input/output descriptions."
+            exit 1
+          fi
+
+      - name: "mention-author: unit tests with a fake gh"
+        run: betterleaks/tests/mention-author.test.sh
+
       - name: Create fixture repo with a fake leak in the latest commit
         run: betterleaks/tests/make-fixture.sh fixture
 
@@ -144,11 +159,12 @@ jobs:
           LEAKS: ${{ steps.nobase.outputs.leaks }}
         run: test "$LEAKS" = "0" || { echo "expected 0 leaks without base config, got $LEAKS"; exit 1; }
 
-      - name: Create fixture with $PWD bind mounts and a real pwd secret
+      - name: Create fixture with $PWD bind mounts, a required-variable check and a real pwd secret
         run: |
           mkdir -p pwdmount
           cat > pwdmount/run.sh <<'SCRIPT'
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt image
+          : "${API_TOKEN:?API_TOKEN is required}"
           SCRIPT
           key="pwd"   # built at runtime so this workflow holds no secret-like literal
           echo "${key}=$(head -c 400 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16)" >> pwdmount/run.sh
@@ -161,11 +177,11 @@ jobs:
           fail-on-leak: "false"
           upload-report: "false"
 
-      - name: "bind mount: assert the mount is allowed and the secret is not"
+      - name: "bind mount: assert the mount and the :? check are allowed and the secret is not"
         env:
           REPORT: ${{ steps.pwdmount.outputs.report-path }}
         run: |
-          jq -e '[.[] | .StartLine] == [2]' "$REPORT" || { jq '.[] | {RuleID, StartLine}' "$REPORT"; exit 1; }
+          jq -e '[.[] | .StartLine] == [3]' "$REPORT" || { jq '.[] | {RuleID, StartLine}' "$REPORT"; exit 1; }
 
       # --- what shows on the check: annotations and job summary ---------------
       # scan.sh is called directly so its stdout (annotation commands) and the
@@ -287,6 +303,15 @@ jobs:
           timeout-minutes: "0"
           upload-report: "false"
 
+      - name: "invalid input: mention-author"
+        id: bad_mention
+        continue-on-error: true
+        uses: ./betterleaks
+        with:
+          path: fixture
+          mention-author: "yes"
+          upload-report: "false"
+
       - name: "invalid input: path outside the workspace"
         id: bad_path
         continue-on-error: true
@@ -301,8 +326,9 @@ jobs:
           BOOL: ${{ steps.bad_bool.outcome }}
           PATH_OUTCOME: ${{ steps.bad_path.outcome }}
           TIMEOUT: ${{ steps.bad_timeout.outcome }}
+          MENTION: ${{ steps.bad_mention.outcome }}
         run: |
-          for o in "mode=$MODE" "fail-on-leak=$BOOL" "path=$PATH_OUTCOME" "timeout-minutes=$TIMEOUT"; do
+          for o in "mode=$MODE" "fail-on-leak=$BOOL" "path=$PATH_OUTCOME" "timeout-minutes=$TIMEOUT" "mention-author=$MENTION"; do
             [[ "${o#*=}" == "failure" ]] || { echo "invalid ${o%%=*} was accepted (${o#*=})"; exit 1; }
           done
 
@@ -367,6 +393,9 @@ jobs:
           smtp-port: "1025"
           smtp-email: betterleaks@example.com
           smtp-password: ${{ github.run_id }} # Mailpit accepts any login
+          # The fixture commit is not on GitHub and the token is read-only, so
+          # the comment fails: the result and the email must be unaffected.
+          mention-author: "true"
 
       - name: Assert the job would fail
         env:
