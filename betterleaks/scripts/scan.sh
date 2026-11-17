@@ -17,6 +17,7 @@
 #                      empty disables                               [.betterleaks-baseline.json]
 #   TIMEOUT_MINUTES    scan time limit                               [15]
 #   FAIL_ON_LEAK, UPLOAD_REPORT  true | false, validated only        [true]
+#   MENTION_AUTHOR               true | false, validated only        [false]
 #   PULL_ATTEMPTS, PULL_DELAY    image pull retries / seconds        [3, 10]
 #   ANNOTATION_LIMIT   findings annotated on the check               [10]
 #
@@ -54,6 +55,7 @@ BASELINE="${BASELINE-.betterleaks-baseline.json}"
 TIMEOUT_MINUTES="${TIMEOUT_MINUTES:-15}"
 FAIL_ON_LEAK="${FAIL_ON_LEAK:-true}"
 UPLOAD_REPORT="${UPLOAD_REPORT:-true}"
+MENTION_AUTHOR="${MENTION_AUTHOR:-false}"
 PULL_ATTEMPTS="${PULL_ATTEMPTS:-3}"
 PULL_DELAY="${PULL_DELAY:-10}"
 ANNOTATION_LIMIT="${ANNOTATION_LIMIT:-10}"
@@ -115,6 +117,7 @@ validate_inputs() {
   require_bool base-config "$BASE_CONFIG"
   require_bool fail-on-leak "$FAIL_ON_LEAK"
   require_bool upload-report "$UPLOAD_REPORT"
+  require_bool mention-author "$MENTION_AUTHOR"
   require_positive_int timeout-minutes "$TIMEOUT_MINUTES"
   require_positive_int PULL_ATTEMPTS "$PULL_ATTEMPTS"
   require_positive_int ANNOTATION_LIMIT "$ANNOTATION_LIMIT"

@@ -43,6 +43,8 @@ jobs:
           smtp-email: ${{ secrets.SMTP_EMAIL }}
           smtp-password: ${{ secrets.SMTP_PASSWORD }}
           fallback-email: ${{ vars.BETTERLEAKS_FALLBACK_EMAIL }}
+          # Optional, see "Mentioning the author": needs `contents: write` on the job
+          # mention-author: ${{ vars.BETTERLEAKS_MENTION_AUTHOR == 'true' }}
 ```
 
 ## Configuration
@@ -97,6 +99,8 @@ How to deal with what the scan reports is described in [Handling findings](#hand
 | `artifact-name` | `betterleaks-report` | Artifact name |
 | `smtp-url`, `smtp-port`, `smtp-email`, `smtp-password` | empty / `25` | Email notification; skipped when `smtp-url` or `smtp-email` is empty |
 | `fallback-email` | empty | Recipient when the committer has no deliverable address (see below) |
+| `mention-author` | `false` | On leaks, @mention the commit author in a commit comment (see below) |
+| `comment-token` | `github.token` | Token for that comment; needs `contents: write` |
 
 Inputs are validated: `mode` must be `dir` or `git`, the `true`/`false` inputs must be exactly that,
 `timeout-minutes` must be a positive integer, and `path` / `config` / `baseline` must stay inside the
@@ -205,6 +209,28 @@ the author's GitHub profile, then `fallback-email`. No-reply addresses (`noreply
 UI, or by users who keep their email private, only carry no-reply addresses, so set `fallback-email`
 (for example from an organization variable `BETTERLEAKS_FALLBACK_EMAIL`). Without any address, the run
 logs a warning and still fails.
+
+## Mentioning the author
+
+With `mention-author: true`, a scan with findings also writes a commit comment:
+
+> @octocat Betterleaks found **2 potential secret(s)** in the files at this commit:
+> - `setup.py:19` (secret-literal-assignment)
+> - `setup.py:20` (env-short-secret-assignment)
+
+GitHub then notifies the author through their own notification settings, at their real address, which
+works even when the commit only carries no-reply emails. Re-runs update the same comment instead of
+adding new ones. Bots and authors whose commit email is not linked to a GitHub account are skipped.
+
+- **Permissions**: creating a commit comment needs `contents: write`. Grant it on the scan job, or pass
+  a `comment-token` from a GitHub App installed only where needed. Do not make an app private key an
+  organization-wide secret for this: any repository's workflow could then use the app's permissions.
+- **Toggle**: pass `${{ vars.BETTERLEAKS_MENTION_AUTHOR == 'true' }}` and set the variable on the
+  repository or the organization.
+- **Never changes the result**: if the comment cannot be written (missing permission, fork pull request
+  with a read-only token), the step logs a warning and the scan result stands.
+- Comments are public on public repositories. They contain only what the public log already shows:
+  rule, file and line, values redacted.
 
 ## Triggers
 

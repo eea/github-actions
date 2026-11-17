@@ -5,6 +5,14 @@ Actions are released together under the major tag (`v1`).
 
 ## Unreleased
 
+### Added
+
+- 2026-11-04 — `betterleaks`: `mention-author` (default `false`) and `comment-token` inputs. On leaks,
+  a commit comment @mentions the author so GitHub notifies them at their own address (works for
+  no-reply commit emails). One comment per commit, updated on re-runs; bots and unlinked authors are
+  skipped; a failed comment only logs a warning. Unit-tested with a fake `gh`
+  (`tests/mention-author.test.sh`).
+
 ### Added (comparison with other Betterleaks and Gitleaks actions)
 
 - 2026-11-03 — `betterleaks`: results on the check itself — one error annotation per finding at its
