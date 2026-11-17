@@ -33,9 +33,6 @@ jobs:
             exit 1
           fi
 
-      - name: "mention-author: unit tests with a fake gh"
-        run: betterleaks/tests/mention-author.test.sh
-
       - name: Create fixture repo with a fake leak in the latest commit
         run: betterleaks/tests/make-fixture.sh fixture
 
@@ -303,15 +300,6 @@ jobs:
           timeout-minutes: "0"
           upload-report: "false"
 
-      - name: "invalid input: mention-author"
-        id: bad_mention
-        continue-on-error: true
-        uses: ./betterleaks
-        with:
-          path: fixture
-          mention-author: "yes"
-          upload-report: "false"
-
       - name: "invalid input: path outside the workspace"
         id: bad_path
         continue-on-error: true
@@ -326,9 +314,8 @@ jobs:
           BOOL: ${{ steps.bad_bool.outcome }}
           PATH_OUTCOME: ${{ steps.bad_path.outcome }}
           TIMEOUT: ${{ steps.bad_timeout.outcome }}
-          MENTION: ${{ steps.bad_mention.outcome }}
         run: |
-          for o in "mode=$MODE" "fail-on-leak=$BOOL" "path=$PATH_OUTCOME" "timeout-minutes=$TIMEOUT" "mention-author=$MENTION"; do
+          for o in "mode=$MODE" "fail-on-leak=$BOOL" "path=$PATH_OUTCOME" "timeout-minutes=$TIMEOUT"; do
             [[ "${o#*=}" == "failure" ]] || { echo "invalid ${o%%=*} was accepted (${o#*=})"; exit 1; }
           done
 
@@ -393,9 +380,6 @@ jobs:
           smtp-port: "1025"
           smtp-email: betterleaks@example.com
           smtp-password: ${{ github.run_id }} # Mailpit accepts any login
-          # The fixture commit is not on GitHub and the token is read-only, so
-          # the comment fails: the result and the email must be unaffected.
-          mention-author: "true"
 
       - name: Assert the job would fail
         env:
