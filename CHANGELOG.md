@@ -5,6 +5,10 @@ Actions are released together under the major tag (`v1`).
 
 ## Unreleased
 
+Nothing yet.
+
+## v1 — 2026-11-17 (`3de517b`)
+
 ### Added
 
 - 2026-11-04 — `betterleaks`: `mention-author` (default `false`) and `comment-token` inputs. On leaks,
@@ -12,6 +16,18 @@ Actions are released together under the major tag (`v1`).
   no-reply commit emails). One comment per commit, updated on re-runs; bots and unlinked authors are
   skipped; a failed comment only logs a warning. Unit-tested with a fake `gh`
   (`tests/mention-author.test.sh`).
+
+### Changed
+
+- 2026-11-16 — `betterleaks`: Betterleaks image bumped to v1.10.1 (pinned by digest).
+
+### Fixed
+
+- 2026-11-04 — `betterleaks` base config: shell required-variable checks such as
+  `: "${GH_TOKEN:?GH_TOKEN is required}"` were reported by `env-short-secret-assignment`. Matches of the
+  form `NAME:?…` are allowlisted; defaults (`:-`) and plain assignments are still reported.
+
+## v1 — before 2026-11-17 (up to `239d736`)
 
 ### Added (comparison with other Betterleaks and Gitleaks actions)
 
@@ -65,9 +81,6 @@ Actions are released together under the major tag (`v1`).
   stay inside the workspace); an invalid `fallback-email` is reported.
 
 ### Fixed
-- 2026-11-04 — `betterleaks` base config: shell required-variable checks such as
-  `: "${GH_TOKEN:?GH_TOKEN is required}"` were reported by `env-short-secret-assignment`. Matches of the
-  form `NAME:?…` are allowlisted; defaults (`:-`) and plain assignments are still reported.
 - 2026-11-03 — `betterleaks` base config: `docker run -v "$PWD:/path"` was reported by
   `secret-literal-assignment` (`PWD` read as a password name). Allowlisted when the match is
   `PWD:/…` only; `pwd=…`, `DB_PWD: …` and similar are still reported.
