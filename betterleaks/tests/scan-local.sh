@@ -3,17 +3,20 @@
 # Run the same scan as the action, locally: EEA base config + the repository's
 # .gitleaks.toml, pinned image from action.yml. Prints the summary CI writes.
 #
-# Usage: scan-local.sh [repo-dir] [dir|git] [--write-baseline]
+# Usage: [LOG_OPTS=...] [BASELINE=file] scan-local.sh [repo-dir] [dir|git] [--write-baseline]
 #   --write-baseline  scan without a baseline and save every current finding
-#                     to <repo>/.betterleaks-baseline.json, so only new
-#                     findings fail from now on. Review the file before
-#                     committing it: every entry should be a false positive or
-#                     a secret that has already been rotated.
+#                     to <repo>/$BASELINE, so only new findings fail from now
+#                     on. Review the file before committing it: every entry
+#                     should be a false positive or a secret that has already
+#                     been rotated.
+#   LOG_OPTS          git log options in git mode, e.g. --all     [-1]
+#   BASELINE          baseline file, relative to the repository
+#                                               [.betterleaks-baseline.json]
 # Exit status: 0 clean, 1 leaks found or error.
 # ============================================================================
 set -euo pipefail
 
-readonly BASELINE_NAME=".betterleaks-baseline.json"
+readonly BASELINE_NAME="${BASELINE:-.betterleaks-baseline.json}"
 
 main() {
   parse_arguments "$@"

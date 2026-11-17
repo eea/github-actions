@@ -125,3 +125,14 @@ regexTarget = "match"
 regexes = [
   '''^[A-Za-z0-9_]+:\?''',
 ]
+
+[[allowlists]]
+description = "Allow Betterleaks baseline files: they hold redacted findings only. A real value in such a file is still reported"
+condition = "AND"
+paths = [
+  '''(^|/)\.betterleaks(-[a-z]+)*-baseline\.json$''',
+]
+regexTarget = "match"
+regexes = [
+  '''REDACTED''',
+]

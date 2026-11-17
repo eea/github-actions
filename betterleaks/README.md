@@ -232,6 +232,80 @@ adding new ones. Bots and authors whose commit email is not linked to a GitHub a
 - Comments are public on public repositories. They contain only what the public log already shows:
   rule, file and line, values redacted.
 
+## Weekly full-history audit
+
+The push scan checks what is pushed. A weekly audit scans **every commit on every branch**, which
+catches secrets that were committed before the scan was enabled, arrived on branches that were never
+scanned, or are only found by newer rules. Old findings that have been handled go in a history
+baseline, so the audit fails only on findings that nobody has seen yet.
+
+1. Create the baseline from a clone with all branches fetched:
+
+   ```sh
+   git -C /path/to/repo fetch --all
+   LOG_OPTS=--all BASELINE=.betterleaks-history-baseline.json \
+     betterleaks/tests/scan-local.sh /path/to/repo git --write-baseline
+   ```
+
+2. Review every entry before committing it. Each one is a commit, file, line and rule, with the value
+   redacted. A real secret in the list must still be rotated: it stays in the history, and on a
+   public repository it has been public since it was pushed.
+
+   ```sh
+   jq -r '.[] | "\(.Commit[0:8]) \(.File):\(.StartLine) \(.RuleID) \(.Match)"' \
+     /path/to/repo/.betterleaks-history-baseline.json
+   ```
+
+3. Commit the baseline with `.github/workflows/betterleaks-audit.yml`:
+
+   ```yaml
+   name: Betterleaks history audit
+
+   on:
+     schedule:
+       - cron: "0 3 * * 1" # Mondays 03:00 UTC
+     workflow_dispatch:
+
+   permissions:
+     contents: read
+
+   jobs:
+     audit:
+       name: Scan all commits for secrets
+       runs-on: ubuntu-latest
+       timeout-minutes: 70 # outer guard; the scan itself stops after timeout-minutes below
+       steps:
+         - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+           with:
+             persist-credentials: false
+             fetch-depth: 0 # all commits of all branches
+
+         - uses: eea/github-actions/betterleaks@v1
+           with:
+             mode: git
+             log-opts: --all
+             baseline: .betterleaks-history-baseline.json
+             timeout-minutes: 60
+   ```
+
+How it differs from the push scan:
+
+- **Who is notified**: GitHub reports a failed scheduled run to the person who last changed the
+  `cron` line, and the run shows in the Actions tab. Leave `smtp-*` and `mention-author` out: they
+  address the author of the latest commit, not of the commit with the finding. The JSON report
+  artifact has the commit, author and date of each finding.
+- **The baseline can stay**: entries match on commit, file, rule and line, and commits do not change,
+  so unlike the `dir` baseline above it does not go stale. Add to it only after handling a new
+  finding (rotate it, or allowlist it if it is not a secret), by regenerating it as in step 1 and
+  reviewing the difference.
+- **New rules**: after an image or base config update, the audit may report old commits that were
+  not findings before. That is what the audit is for; handle them, then regenerate the baseline.
+- **Baseline files are not findings**: the base config allows the redacted entries in files named
+  `.betterleaks-*baseline.json`; a real value in such a file is still reported.
+- **Inactive public repositories**: GitHub disables scheduled workflows after 60 days without
+  activity in a public repository. Re-enable the workflow in the Actions tab, or run it by hand
+  with `workflow_dispatch`.
+
 ## Triggers
 
 `push` scans every branch of the repository, including direct pushes without a PR. A PR from a

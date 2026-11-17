@@ -183,6 +183,31 @@ jobs:
         run: |
           jq -e '[.[] | .StartLine] == [3]' "$REPORT" || { jq '.[] | {RuleID, StartLine}' "$REPORT"; exit 1; }
 
+      # A committed baseline holds redacted findings that look like secrets to
+      # the generic rules; only a real value in such a file may be reported.
+      - name: Create fixture with a redacted baseline entry and a real value in a baseline file
+        run: |
+          mkdir -p blfile
+          cat > blfile/.betterleaks-history-baseline.json <<'JSON'
+          [{"Match": "passwordVariable: 'REDACTED'", "Secret": "REDACTED"},
+          JSON
+          key="pwd"   # built at runtime so this workflow holds no secret-like literal
+          echo " {\"Match\": \"${key}=$(head -c 400 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16)\"}]" >> blfile/.betterleaks-history-baseline.json
+
+      - name: "baseline file: scan"
+        id: blfile
+        uses: ./betterleaks
+        with:
+          path: blfile
+          fail-on-leak: "false"
+          upload-report: "false"
+
+      - name: "baseline file: assert the redacted entry is allowed and the real value is not"
+        env:
+          REPORT: ${{ steps.blfile.outputs.report-path }}
+        run: |
+          jq -e '[.[] | .StartLine] == [2]' "$REPORT" || { jq '.[] | {RuleID, StartLine}' "$REPORT"; exit 1; }
+
       # --- what shows on the check: annotations and job summary ---------------
       # scan.sh is called directly so its stdout (annotation commands) and the
       # summary file can be inspected; printed output is defused with "> ".

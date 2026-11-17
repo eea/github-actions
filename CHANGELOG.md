@@ -5,7 +5,18 @@ Actions are released together under the major tag (`v1`).
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- 2026-11-17 — `betterleaks`: README section "Weekly full-history audit": a scheduled `mode: git`,
+  `log-opts: --all` workflow with a history baseline (`.betterleaks-history-baseline.json`) for
+  findings that were already handled. `tests/scan-local.sh` takes `LOG_OPTS` and `BASELINE` to
+  create it.
+
+### Fixed
+
+- 2026-11-17 — `betterleaks` base config: a committed baseline file was reported by the generic rules
+  (its redacted entries look like `password: 'REDACTED'`). Redacted values in `.betterleaks-*baseline.json`
+  are allowlisted; a real value in such a file is still reported.
 
 ## v1 — 2026-11-17 (`3de517b`)
 
