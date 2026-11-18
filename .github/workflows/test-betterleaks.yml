@@ -159,6 +159,31 @@ jobs:
           LEAKS: ${{ steps.nobase.outputs.leaks }}
         run: test "$LEAKS" = "0" || { echo "expected 0 leaks without base config, got $LEAKS"; exit 1; }
 
+      # The add-on repositories commit a .env holding the Jest or the Vitest setup
+      # line; it is allowed, every other line of the file is still reported.
+      - name: Create fixture with test setup .env files and a secret in one of them
+        run: |
+          mkdir -p dotenv/jest dotenv/real
+          printf 'VITEST_USE_SETUP=ON # Vitest configuration variables: ON, OFF\n' > dotenv/.env
+          printf '# Jest configuration variables\n# - possible values: ON, OFF\nJEST_USE_SETUP=OFF\n' > dotenv/jest/.env
+          key="pwd"   # built at runtime so this workflow holds no secret-like literal
+          echo "${key}=$(head -c 400 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16)" > dotenv/real/.env
+
+      - name: "dotenv: scan"
+        id: dotenv
+        uses: ./betterleaks
+        with:
+          path: dotenv
+          fail-on-leak: "false"
+          upload-report: "false"
+
+      - name: "dotenv: assert the setup lines and comments are allowed and the secret is not"
+        env:
+          REPORT: ${{ steps.dotenv.outputs.report-path }}
+        run: |
+          jq -e '([.[].File] | unique == ["real/.env"]) and any(.[]; .RuleID == "dotenv-only-jest-setup")' "$REPORT" \
+            || { jq '.[] | {RuleID, File, StartLine}' "$REPORT"; exit 1; }
+
       - name: Create fixture with $PWD bind mounts, a required-variable check and a real pwd secret
         run: |
           mkdir -p pwdmount
