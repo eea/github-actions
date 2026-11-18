@@ -70,15 +70,16 @@ tags = ["standalone-token", "generic"]
 
 [[rules]]
 id = "dotenv-only-jest-setup"
-description = ".env may only contain the committed Jest setup lines"
+description = ".env may only contain the committed test setup lines"
 path = '''(?i)(^|/)\.env$'''
-regex = '''(?m)^(.+)$'''
+regex = '''(?m)^([^#\s].*)$'''
 secretGroup = 1
 tags = ["file", "dotenv"]
 [[rules.allowlists]]
 regexTarget = "match"
 regexes = [
-  '''^JEST_USE_SETUP=(ON|OFF) # Jest configuration variables: ON, OFF\r?$''',
+  '''^JEST_USE_SETUP=(ON|OFF)( # Jest configuration variables: ON, OFF)?\r?$''',
+  '''^VITEST_USE_SETUP=(ON|OFF)( # Vitest configuration variables: ON, OFF)?\r?$''',
 ]
 
 [[rules]]
