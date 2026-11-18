@@ -14,6 +14,10 @@ Actions are released together under the major tag (`v1`).
 
 ### Fixed
 
+- 2026-11-18 — `betterleaks` base config: the `.env` rule reported the committed setup file of the
+  repositories that moved to Vitest (`.env` holding `VITEST_USE_SETUP=ON`) and the comment lines of
+  the older Jest setup files. The rule now ignores comment lines and allows the Jest and the Vitest
+  setup line, with or without its trailing comment; every other line is still reported.
 - 2026-11-17 — `betterleaks` base config: a committed baseline file was reported by the generic rules
   (its redacted entries look like `password: 'REDACTED'`). Redacted values in `.betterleaks-*baseline.json`
   are allowlisted; a real value in such a file is still reported.
